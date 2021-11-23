@@ -18,14 +18,19 @@ package fritzboxmetrics
 import (
 	"bytes"
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	dac "github.com/123Haynes/go-http-digest-auth-client"
-	"github.com/pkg/errors"
+)
+
+const (
+	RFC3339_WITHOUT_TZ = "2006-01-02T15:04:05"
 )
 
 // curl http://fritz.box:49000/igddesc.xml
@@ -132,13 +137,13 @@ type Result map[string]interface{}
 func (r *Root) load() error {
 	response, err := http.Get(fmt.Sprintf("%s/igddesc.xml", r.BaseURL))
 	if err != nil {
-		return errors.Wrap(err, "could not get igddesc.xml")
+		return fmt.Errorf("could not get igddesc.xml: %w", err)
 	}
 
 	dec := xml.NewDecoder(response.Body)
 
 	if err = dec.Decode(r); err != nil {
-		return errors.Wrap(err, "could not decode XML")
+		return fmt.Errorf("could not decode XML: %w", err)
 	}
 
 	r.Services = make(map[string]*Service)
@@ -148,12 +153,12 @@ func (r *Root) load() error {
 func (r *Root) loadTr64() error {
 	igddesc, err := http.Get(fmt.Sprintf("%s/tr64desc.xml", r.BaseURL))
 	if err != nil {
-		return errors.Wrap(err, "could not fetch tr64desc.xml")
+		return fmt.Errorf("could not fetch tr64desc.xml: %w", err)
 	}
 
 	dec := xml.NewDecoder(igddesc.Body)
 	if err = dec.Decode(r); err != nil {
-		return errors.Wrap(err, "could not decode XML")
+		return fmt.Errorf("could not decode XML: %w", err)
 	}
 
 	r.Services = make(map[string]*Service)
@@ -169,14 +174,14 @@ func (d *Device) fillServices(r *Root) error {
 
 		response, err := http.Get(r.BaseURL + s.SCPDURL)
 		if err != nil {
-			return errors.Wrap(err, "could not get service descriptions")
+			return fmt.Errorf("could not get service descriptions: %w", err)
 		}
 
 		var scpd scpdRoot
 
 		dec := xml.NewDecoder(response.Body)
 		if err = dec.Decode(&scpd); err != nil {
-			return errors.Wrap(err, "could not decode xml")
+			return fmt.Errorf("could not decode xml: %w", err)
 		}
 
 		s.Actions = make(map[string]*Action)
@@ -204,7 +209,7 @@ func (d *Device) fillServices(r *Root) error {
 	}
 	for _, d2 := range d.Devices {
 		if err := d2.fillServices(r); err != nil {
-			return errors.Wrap(err, "could not fill services")
+			return fmt.Errorf("could not fill services: %w", err)
 		}
 	}
 	return nil
@@ -227,7 +232,7 @@ func (a *Action) Call() (Result, error) {
 
 	req, err := http.NewRequest("POST", url, body)
 	if err != nil {
-		return nil, errors.Wrap(err, "could not create new request")
+		return nil, fmt.Errorf("could not create new request: %w", err)
 	}
 
 	action := fmt.Sprintf("%s#%s", a.service.ServiceType, a.Name)
@@ -239,11 +244,16 @@ func (a *Action) Call() (Result, error) {
 	t := dac.NewTransport(a.service.Device.root.Username, a.service.Device.root.Password)
 	resp, err := t.RoundTrip(req)
 	if err != nil {
-		return nil, errors.Wrap(err, "could not roundtrip digest authentification")
+		return nil, fmt.Errorf("could not roundtrip digest authentification: %w", err)
+	}
+	if resp.StatusCode == http.StatusUnauthorized {
+		return nil, errors.New("authorization required")
 	}
 
 	data := new(bytes.Buffer)
-	data.ReadFrom(resp.Body)
+	if _, err := data.ReadFrom(resp.Body); err != nil {
+		return nil, fmt.Errorf("could not read body: %w", err)
+	}
 
 	return a.parseSoapResponse(data)
 
@@ -294,6 +304,15 @@ func (a *Action) parseSoapResponse(r io.Reader) (Result, error) {
 }
 
 func convertResult(val string, arg *Argument) (interface{}, error) {
+	switch arg.StateVariable.Name {
+	case "X_AVM_DE_TotalBytesSent64", "X_AVM_DE_TotalBytesReceived64":
+		res, err := strconv.ParseUint(val, 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("could not parse uint: %w", err)
+		}
+		return uint64(res), nil
+	}
+
 	switch arg.StateVariable.DataType {
 	case "string":
 		return val, nil
@@ -304,9 +323,39 @@ func convertResult(val string, arg *Argument) (interface{}, error) {
 		// type ui4 can contain values greater than 2^32!
 		res, err := strconv.ParseUint(val, 10, 64)
 		if err != nil {
-			return nil, errors.Wrap(err, "could nto parse uint")
+			return nil, fmt.Errorf("could not parse uint: %w", err)
 		}
 		return uint64(res), nil
+
+	case "i1", "i2", "i4":
+		// type i4 can contain values greater than 2^32!, 2^64 to be precise. ParseInt returns int64 anyways.
+		res, err := strconv.ParseInt(val, 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("could not parse int: %w", err)
+		}
+		return int64(res), nil
+
+	case "dateTime":
+		// UPnP uses ISO8601 (non-strict RFC3339) with optional TZ.
+		// try RFC3339 first
+		res, err := time.Parse(time.RFC3339, val)
+		if err == nil {
+			// RFC3339 complaient. Yay.
+			return res, nil
+		}
+		// if RFC3339 fails, try without TZ
+		res, err = time.Parse(RFC3339_WITHOUT_TZ, val)
+			if err != nil {
+				return nil, fmt.Errorf("could not parse dateTime: %w", err)
+			}
+		return res, nil
+
+	case "dateTime.tz":
+		res, err := time.Parse(time.RFC3339, val)
+		if err != nil {
+			return nil, fmt.Errorf("could not parse dateTime.tz: %w", err)
+		}
+		return res, nil
 	default:
 		return nil, fmt.Errorf("unknown datatype: %s", arg.StateVariable.DataType)
 	}
@@ -321,7 +370,7 @@ func LoadServices(device string, port uint16, username string, password string) 
 	}
 
 	if err := root.load(); err != nil {
-		return nil, errors.Wrap(err, "could not load root element")
+		return nil, fmt.Errorf("could not load root element: %w", err)
 	}
 
 	rootTr64 := &Root{
@@ -331,7 +380,7 @@ func LoadServices(device string, port uint16, username string, password string) 
 	}
 
 	if err := rootTr64.loadTr64(); err != nil {
-		return nil, errors.Wrap(err, "could not load Tr64")
+		return nil, fmt.Errorf("could not load Tr64: %w", err)
 	}
 
 	for k, v := range rootTr64.Services {

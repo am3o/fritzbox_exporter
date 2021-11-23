@@ -2,8 +2,9 @@
 
 This exporter exports some variables from an [AVM Fritzbox](https://avm.de/produkte/fritzbox/) to Prometheus.
 
-[![Docker Build Status](https://img.shields.io/docker/build/mxschmitt/fritzbox_exporter.svg)](https://store.docker.com/community/images/mxschmitt/fritzbox_exporter)
-[![GoDoc](https://godoc.org/github.com/mxschmitt/fritzbox_exporter/pkg/fritzboxmetrics?status.svg)](https://godoc.org/github.com/mxschmitt/fritzbox_exporter/pkg/fritzboxmetrics)
+### (Looking for additional maintainers!)
+
+[![Docker Build Status](https://img.shields.io/docker/automated/mxschmitt/fritzbox_exporter)](https://hub.docker.com/r/mxschmitt/fritzbox_exporter) ![Test Docker](https://github.com/mxschmitt/fritzbox_exporter/workflows/Test%20Docker/badge.svg) ![Contributions](https://img.shields.io/badge/contributions-welcome-brightgreen)
 
 ![FRITZ!Box Prometheus Exporter](./docs/logo.svg)
 
@@ -53,8 +54,48 @@ Usage $GOPATH/src/github.com/mxschmitt/fritzbox_exporter/cmd/exporter/exporter:
       The port of the FRITZ!Box UPnP service (default 49000)
   -listen-address string
       The address to listen on for HTTP requests. (default ":9133")
-  -test
+  -password string
+      The password for the FRITZ!Box UPnP service
+  -stdout
       print all available metrics to stdout
+  -username string
+      The user for the FRITZ!Box UPnP service
+```
+
+### With Docker
+
+```shell
+docker run -d --name fritzbox-exporter -p "9133:9133" mxschmitt/fritzbox_exporter
+```
+
+Then call the metrics endpoint on http://localhost:9133/metrics
+
+### Configuration
+
+|    CLI-Argument    |               Environment               |       Default         |                 Description                 |
+|--------------------|-----------------------------------------|-----------------------|---------------------------------------------|
+| `-stdout`          | `FRITZ_BOX_EXPORTER_STDOUT`             | `0` (bool)            | Print all available metrics to stdout       |
+| `-listen-address`  | `FRITZ_BOX_EXPORTER_LISTEN_ADDR`        | `:9133` (string)      | The address to listen on for HTTP requests. |
+| `-gateway-address` | `FRITZ_BOX_EXPORTER_FRITZ_BOX_IP`       | `fritz.box` (string)  | The hostname or IP of the FRITZ!Box         |
+| `-gateway-port`    | `FRITZ_BOX_EXPORTER_FRITZ_BOX_PORT`     | `49000` (int)         | The port of the FRITZ!Box UPnP service      |
+| `-username`        | `FRITZ_BOX_EXPORTER_FRITZ_BOX_USERNAME` | `<empty>` (string)    | The user to use for FRITZ!Box UPnP service  |
+| `-password`        | `FRITZ_BOX_EXPORTER_FRITZ_BOX_PASSWORD` | `<empty>` (string)    | The password for the FRITZ!Box UPnP service |
+
+### Sytemd Setup
+
+To install and run this exporter as a systemd service, you need to create a user, copy the binary to its home folder and create a systemd unit. A sample service is provided in the docs folder.  In there, configuration is done trough a `.env` so no daemon-reload is necessary after changing the configuration. See above, or in the example `.env` file in the `docs` folder, for the available environment variables and how to use them.
+
+```bash
+# useradd fritzbox_exporter -d /etc/fritzbox_exporter -s /bin/nologin
+# cp exporter /etc/fritzbox_exporter/exporter
+# chown fritzbox_exporter:fritzbox_exporter -R /etc/fritzbox_exporter/
+# sudo -u fritzbox_exporter -s
+$ cd ~
+$ vim .env # See docs/.env
+$ exit
+# vim /etc/systemd/system/fritzbox_exporter.service # See docs/fritzbox_exporter.service
+# systemctl daemon-reload
+# systemctl enable --now fritzbox_exporter.service
 ```
 
 ## Exported metrics
@@ -94,10 +135,10 @@ gateway_wan_packets_received{gateway="fritz.box"} 1.346625e+06
 gateway_wan_packets_sent{gateway="fritz.box"} 3.05051e+06
 ```
 
-## Output of -test
+## Output of -stdout
 
-The exporter prints all available Variables to stdout when called with the -test option.
-These values are determined by parsing all services from http://fritz.box:49000/igddesc.xml 
+The exporter prints all available Variables to stdout when called with the -stdout option.
+These values are determined by parsing all services from http://fritz.box:49000/igddesc.xml
 
     Name: urn:schemas-any-com:service:Any:1
     WANDevice - FRITZ!Box 7490: urn:schemas-upnp-org:service:WANCommonInterfaceConfig:1
@@ -152,7 +193,7 @@ These values are determined by parsing all services from http://fritz.box:49000/
       GetIdleDisconnectTime
         IdleDisconnectTime: 0
       X_AVM_DE_GetExternalIPv6Address
-        ExternalIPv6Address: 
+        ExternalIPv6Address:
         PrefixLength: 0
         ValidLifetime: 0
         PreferedLifetime: 0
@@ -162,14 +203,14 @@ These values are determined by parsing all services from http://fritz.box:49000/
       GetExternalIPAddress
         ExternalIPAddress: 1.1.1.1
       X_AVM_DE_GetIPv6Prefix
-        IPv6Prefix: 
+        IPv6Prefix:
         PrefixLength: 0
         ValidLifetime: 0
         PreferedLifetime: 0
       X_AVM_DE_GetIPv6DNSServer
-        IPv6DNSServer1: 
+        IPv6DNSServer1:
         ValidLifetime1: 2002000000
-        IPv6DNSServer2: 
+        IPv6DNSServer2:
         ValidLifetime2: 199800000
       GetConnectionTypeInfo
         ConnectionType: IP_Routed

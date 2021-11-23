@@ -22,11 +22,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/mxschmitt/golang-env-struct"
+	envstruct "github.com/mxschmitt/golang-env-struct"
 
 	"github.com/mxschmitt/fritzbox_exporter/pkg/fritzboxmetrics"
-	"github.com/pkg/errors"
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 const serviceLoadRetryTime = 1 * time.Minute
@@ -76,7 +76,7 @@ var metrics = []*Metric{
 	{
 		Service: "urn:schemas-upnp-org:service:WANCommonInterfaceConfig:1",
 		Action:  "GetAddonInfos",
-		Result:  "TotalBytesReceived",
+		Result:  "X_AVM_DE_TotalBytesReceived64",
 		Desc: prometheus.NewDesc(
 			"fritz_box_exporter_gateway_wan_bytes_received",
 			"bytes received on gateway WAN interface",
@@ -88,7 +88,7 @@ var metrics = []*Metric{
 	{
 		Service: "urn:schemas-upnp-org:service:WANCommonInterfaceConfig:1",
 		Action:  "GetAddonInfos",
-		Result:  "TotalBytesSent",
+		Result:  "X_AVM_DE_TotalBytesSent64",
 		Desc: prometheus.NewDesc(
 			"fritz_box_exporter_gateway_wan_bytes_sent",
 			"bytes sent on gateway WAN interface",
@@ -313,7 +313,7 @@ func (fc *FritzboxCollector) Collect(ch chan<- prometheus.Metric) {
 func printToStdout(settings *Settings) error {
 	root, err := fritzboxmetrics.LoadServices(settings.FritzBox.IP, uint16(settings.FritzBox.Port), settings.FritzBox.UserName, settings.FritzBox.IP)
 	if err != nil {
-		return errors.Wrap(err, "could not load UPnP service")
+		return fmt.Errorf("could not load UPnP service: %w", err)
 	}
 
 	for _, s := range root.Services {
@@ -382,6 +382,6 @@ func main() {
 	prometheus.MustRegister(collector)
 	prometheus.MustRegister(collectErrors)
 
-	http.Handle("/metrics", prometheus.Handler())
+	http.Handle("/metrics", promhttp.Handler())
 	log.Fatal(http.ListenAndServe(settings.ListenAddr, nil))
 }

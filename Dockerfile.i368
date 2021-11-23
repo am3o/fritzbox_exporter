@@ -1,4 +1,4 @@
-FROM golang:buster AS build-env
+FROM i386/golang:buster AS build-env
 
 LABEL maintainer="Max Schmitt <max@schmitt.mx>"
 LABEL description="FRITZ!Box Prometheus exporter"
@@ -13,7 +13,7 @@ WORKDIR /fritzbox_exporter
 
 RUN CGO_ENABLED=0 go build -o /out cmd/exporter/exporter.go
 
-FROM alpine
+FROM i386/alpine
 
 RUN apk update && apk add ca-certificates
 
